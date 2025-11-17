@@ -153,8 +153,6 @@ def run_trading_bot():
     
     if not bot_state['trade_active']:
         print(f"--- Paper Trading Bot Initialized (Strategy: {PRIMARY_STRATEGY}) ---")
-        # This message is sent from the main block now to indicate successful deployment
-        # send_telegram_message(f"✅ *Trading Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
     
     # --- 2. Main Trading Loop ---
     try:
@@ -243,20 +241,26 @@ def run_trading_bot():
             trade_log.to_csv(LOG_FILE_NAME, index=False)
         print("Trading bot thread finished.")
 
-# --- Main Execution Block ---
+# --- Gunicorn Application Startup ---
+# This block runs when Gunicorn imports the file.
+# It's the correct place for initialization code in a production environment.
+
+# Send deployment success message
+send_telegram_message(f"✅ *Deployment Successful & Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
+
+# Initialize and start the scheduler
+scheduler = BackgroundScheduler(timezone=INDIA_TZ)
+scheduler.add_job(morning_status_update, 'cron', hour=9, minute=30)
+scheduler.start()
+
+# Start the main trading bot logic in a background thread
+bot_thread = Thread(target=run_trading_bot, daemon=True)
+bot_thread.start()
+
+
+# --- Main Execution Block (for local development) ---
 if __name__ == "__main__":
-    # Send deployment success message
-    send_telegram_message(f"✅ *Deployment Successful & Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
-
-    # --- Initialize Scheduler ---
-    scheduler = BackgroundScheduler(timezone=INDIA_TZ)
-    scheduler.add_job(morning_status_update, 'cron', hour=9, minute=30)
-    scheduler.start()
-    
-    # Start the trading bot in a background thread
-    bot_thread = Thread(target=run_trading_bot, daemon=True)
-    bot_thread.start()
-
-    # Run the Flask web server
+    # This block is for running the app directly with 'python main.py'
+    # It's useful for local testing but is NOT executed by Gunicorn.
     port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
