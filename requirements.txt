@@ -1,6 +1,7 @@
-pandas
+click==7.1.2
 jugaad-data
+pandas
 python-dotenv
-Flask==2.3.3
+Flask==2.2.5
 Werkzeug==2.3.8
 gunicorn==22.0.0
