@@ -1,7 +1,16 @@
-click==7.1.2
+# Flask 2.2.x requires Werkzeug < 3.0.
+# The versions below are compatible and resolve the 'url_quote' import error.
+Flask==2.2.5
+Werkzeug==2.2.3
+
+# Trading bot dependencies
 pandas
 jugaad-data
 python-dotenv
-Flask==2.2.5
-Werkzeug==2.2.3
 gunicorn==22.0.0
+click==7.1.2
+
+# New dependencies for scheduling and timezone handling
+APScheduler
+pytz
+requests

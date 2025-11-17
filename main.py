@@ -8,6 +8,8 @@ import os
 from dotenv import load_dotenv
 from flask import Flask, jsonify
 from threading import Thread
+from apscheduler.schedulers.background import BackgroundScheduler
+from pytz import timezone
 
 # --- Load Environment Variables ---
 load_dotenv()
@@ -30,6 +32,7 @@ POLLING_INTERVAL_SECONDS = int(os.getenv('POLLING_INTERVAL_SECONDS', 8))
 MARKET_OPEN_TIME = dt_time.fromisoformat(os.getenv('MARKET_OPEN_TIME', '09:25:00'))
 MARKET_CLOSE_TIME = dt_time.fromisoformat(os.getenv('MARKET_CLOSE_TIME', '15:30:00'))
 LOG_FILE_NAME = os.getenv('LOG_FILE_NAME', 'paper_trade_log.csv')
+INDIA_TZ = timezone('Asia/Kolkata')
 
 # --- Telegram Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -93,6 +96,18 @@ def fetch_live_data(n: NSELive, instruments: dict) -> dict:
         print(f"API ERROR: {e} at {live_data['timestamp']}. Returning partial/None data.")
     return live_data
 
+# --- Scheduled Tasks ---
+def morning_status_update():
+    """Send a morning status update at 9:30 AM IST."""
+    now_ist = datetime.now(INDIA_TZ)
+    message = (
+        f"☀️ *Good Morning!* (IST: {now_ist.strftime('%H:%M:%S')})\n"
+        f"Bot Status: `{bot_state['status_message']}`\n"
+        f"Awaiting market open and entry conditions."
+    )
+    send_telegram_message(message)
+
+
 # --- Web Server Endpoints ---
 @app.route('/health')
 def health_check():
@@ -138,7 +153,8 @@ def run_trading_bot():
     
     if not bot_state['trade_active']:
         print(f"--- Paper Trading Bot Initialized (Strategy: {PRIMARY_STRATEGY}) ---")
-        send_telegram_message(f"✅ *Trading Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
+        # This message is sent from the main block now to indicate successful deployment
+        # send_telegram_message(f"✅ *Trading Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
     
     # --- 2. Main Trading Loop ---
     try:
@@ -148,8 +164,15 @@ def run_trading_bot():
             if not (MARKET_OPEN_TIME <= current_time <= MARKET_CLOSE_TIME):
                 bot_state["status_message"] = "Market is closed."
                 print(bot_state["status_message"])
-                if not bot_state['trade_active']:
-                    send_telegram_message("Market is closed. Trading bot shutting down. 👋")
+                if bot_state['trade_active']: # If a trade is active, exit it
+                    exit_message = (f"🛑 *--- TRADE EXITED (Market Closed) ---*\n" f"Final P&L: *₹{bot_state['pnl_per_lot']:.2f}*")
+                    send_telegram_message(exit_message)
+                    if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
+                    bot_state['trade_active'] = False
+                    bot_state['position_book'] = {}
+                
+                # After handling the exit, break the loop
+                print("Trading loop finished for the day.")
                 break
                 
             live_data = fetch_live_data(n, INSTRUMENTS)
@@ -222,6 +245,14 @@ def run_trading_bot():
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
+    # Send deployment success message
+    send_telegram_message(f"✅ *Deployment Successful & Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
+
+    # --- Initialize Scheduler ---
+    scheduler = BackgroundScheduler(timezone=INDIA_TZ)
+    scheduler.add_job(morning_status_update, 'cron', hour=9, minute=30)
+    scheduler.start()
+    
     # Start the trading bot in a background thread
     bot_thread = Thread(target=run_trading_bot, daemon=True)
     bot_thread.start()
