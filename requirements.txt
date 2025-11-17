@@ -1,6 +1,6 @@
 pandas
 jugaad-data
 python-dotenv
-Flask==3.0.3
-Werkzeug==3.0.3
+Flask==2.3.3
+Werkzeug==2.3.8
 gunicorn==22.0.0
