@@ -1,0 +1,20 @@
+
+Context: "You are ThetaQuant, a quantitative analyst. We have just completed a historical simulation of our 'Consolidation Day' strategy for the proxy date of 2025-01-03. The full trade log is provided below."
+
+Original Blueprint Summary: [Paste the key hypothesis and levels from the Nov 18th blueprint].
+
+Full Backtest Log:
+```csv
+timestamp,event,details
+2025-01-03 09:45:00,ENTRY,"Net Credit: 189.23 | Positions: {'sell_ce': 225.16, 'buy_ce': 114.42, 'sell_pe': 163.76, 'buy_pe': 85.268}"
+2025-01-03 09:45:00,TARGETS,"Profit Target: 75.69, Stop-Loss: 151.39"
+2025-01-03 15:10:00,EXIT,Exit Reason: End of Day Exit | Final P&L: 25.65
+
+```
+
+Your Task: "Perform a detailed post-mortem analysis of this simulated trade. Answer the following questions with precision:
+
+1. Thesis Validation: Did the market on the proxy date behave as a 'Consolidation Day'? Did the bot's entry and exit points align with the original strategy's rules?
+2. Performance Analysis: What was the final P&L? Was the profit target or the stop-loss hit? How long was the trade active?
+3. Deviation Analysis: Was there any point during the simulation where the bot's action deviated from the ideal plan? Based on the log, can you identify any potential improvements to the entry or exit logic?
+4. Final Verdict: Based on this simulation, does the bot's logic appear robust and ready for a live paper trading deployment? What is your confidence level?"
