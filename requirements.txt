@@ -1,7 +1,6 @@
-click==7.1.2
-jugaad-data
 pandas
+jugaad-data
 python-dotenv
 Flask==2.2.5
-Werkzeug==2.3.8
+Werkzeug==2.2.3
 gunicorn==22.0.0
