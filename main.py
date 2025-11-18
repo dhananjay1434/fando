@@ -18,7 +18,6 @@ load_dotenv()
 app = Flask(__name__)
 
 # --- Global State & Configuration ---
-# Using a dictionary for global state to make it explicit
 bot_state = {
     "trade_active": False,
     "position_book": {},
@@ -61,9 +60,12 @@ PROFIT_TARGET_PER_LOT = float(os.getenv('PROFIT_TARGET_PER_LOT', 0))
 # --- Global DataFrame for Logging ---
 trade_log_cols = ['timestamp', 'action', 'instrument', 'price', 'pnl', 'commentary']
 trade_log = pd.DataFrame({
-    'timestamp': pd.Series(dtype='datetime64[ns]'), 'action': pd.Series(dtype='object'),
-    'instrument': pd.Series(dtype='object'), 'price': pd.Series(dtype='float64'),
-    'pnl': pd.Series(dtype='float64'), 'commentary': pd.Series(dtype='object')
+    'timestamp': pd.Series(dtype='datetime64[ns]'), 
+    'action': pd.Series(dtype='object'),
+    'instrument': pd.Series(dtype='object'), 
+    'price': pd.Series(dtype='float64'),
+    'pnl': pd.Series(dtype='float64'), 
+    'commentary': pd.Series(dtype='object')
 })
 
 # --- Core Functions ---
@@ -86,14 +88,81 @@ def log_trade(timestamp, action, instrument, price, pnl, commentary):
     trade_log = pd.concat([trade_log, new_log_entry], ignore_index=True)
 
 def fetch_live_data(n: NSELive, instruments: dict) -> dict:
-    live_data = {'spot': None, 'sell_ce_ltp': None, 'buy_ce_ltp': None, 'sell_pe_ltp': None, 'buy_pe_ltp': None, 'timestamp': datetime.now()}
+    """
+    Fetch live data from NSE with proper data structure handling.
+    Returns a dictionary with spot price and option LTPs.
+    """
+    live_data = {
+        'spot': None, 
+        'sell_ce_ltp': None, 
+        'buy_ce_ltp': None, 
+        'sell_pe_ltp': None, 
+        'buy_pe_ltp': None, 
+        'timestamp': datetime.now()
+    }
+    
     try:
-        spot_data = n.live_index("NIFTY 50")
-        live_data['spot'] = spot_data['data'][0]['lastPrice']
+        # Fetch live index data - returns dict with 'name', 'timestamp', 'data' keys
+        index_response = n.live_index("NIFTY 50")
+        
+        # The response structure: {'name': 'NIFTY 50', 'timestamp': '...', 'data': [...]}
+        # Extract spot price from the first element in data array
+        if isinstance(index_response, dict) and 'data' in index_response:
+            if len(index_response['data']) > 0:
+                live_data['spot'] = index_response['data'][0].get('lastPrice')
+                print(f"Spot Price: {live_data['spot']}")
+        else:
+            print("API WARNING: Unexpected format for live_index response.")
+            print(f"Response: {index_response}")
+
+        # Fetch option chain data
         oc_data = n.index_option_chain("NIFTY")
-        # ... (rest of the function is the same)
+        
+        # Debug: Print structure to understand the format
+        if not oc_data:
+            print("WARNING: Option chain data is empty")
+            return live_data
+            
+        # The option chain structure: {'records': {'data': [...]}, ...}
+        records = oc_data.get('records', {})
+        data_list = records.get('data', [])
+        
+        if not data_list:
+            print("WARNING: No data in option chain")
+            return live_data
+        
+        # Helper function to find LTP for a given strike and option type
+        def get_ltp(strike, option_type):
+            """
+            Extract LTP from option chain data.
+            Each record contains 'strikePrice', 'CE', and 'PE' keys.
+            """
+            for record in data_list:
+                if record.get('strikePrice') == strike:
+                    option_data = record.get(option_type, {})
+                    if option_data and isinstance(option_data, dict):
+                        ltp = option_data.get('lastPrice')
+                        if ltp is not None:
+                            return float(ltp)
+            return None
+
+        # Fetch LTPs for all instruments
+        live_data['sell_ce_ltp'] = get_ltp(instruments['SELL_CE_STRIKE'], 'CE')
+        live_data['buy_ce_ltp'] = get_ltp(instruments['BUY_CE_STRIKE'], 'CE')
+        live_data['sell_pe_ltp'] = get_ltp(instruments['SELL_PE_STRIKE'], 'PE')
+        live_data['buy_pe_ltp'] = get_ltp(instruments['BUY_PE_STRIKE'], 'PE')
+        
+        # Log which prices were found
+        print(f"Fetched prices - SELL_CE: {live_data['sell_ce_ltp']}, "
+              f"BUY_CE: {live_data['buy_ce_ltp']}, "
+              f"SELL_PE: {live_data['sell_pe_ltp']}, "
+              f"BUY_PE: {live_data['buy_pe_ltp']}")
+
     except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
         print(f"API ERROR: {e} at {live_data['timestamp']}. Returning partial/None data.")
+        import traceback
+        traceback.print_exc()
+    
     return live_data
 
 # --- Scheduled Tasks ---
@@ -106,7 +175,6 @@ def morning_status_update():
         f"Awaiting market open and entry conditions."
     )
     send_telegram_message(message)
-
 
 # --- Web Server Endpoints ---
 @app.route('/health')
@@ -133,6 +201,7 @@ def run_trading_bot():
     # --- 1. Initialization & State Restoration ---
     try:
         n = NSELive()
+        print("NSELive initialized successfully")
     except Exception as e:
         print(f"Failed to initialize NSELive: {e}. Exiting.")
         send_telegram_message(f"CRITICAL: Failed to initialize NSELive API: {e} 🛑")
@@ -162,19 +231,23 @@ def run_trading_bot():
             if not (MARKET_OPEN_TIME <= current_time <= MARKET_CLOSE_TIME):
                 bot_state["status_message"] = "Market is closed."
                 print(bot_state["status_message"])
-                if bot_state['trade_active']: # If a trade is active, exit it
-                    exit_message = (f"🛑 *--- TRADE EXITED (Market Closed) ---*\n" f"Final P&L: *₹{bot_state['pnl_per_lot']:.2f}*")
+                if bot_state['trade_active']:
+                    exit_message = (
+                        f"🛑 *--- TRADE EXITED (Market Closed) ---*\n"
+                        f"Final P&L: *₹{bot_state['pnl_per_lot']:.2f}*"
+                    )
                     send_telegram_message(exit_message)
-                    if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
+                    if os.path.exists(STATE_FILE):
+                        os.remove(STATE_FILE)
                     bot_state['trade_active'] = False
                     bot_state['position_book'] = {}
                 
-                # After handling the exit, break the loop
                 print("Trading loop finished for the day.")
                 break
                 
             live_data = fetch_live_data(n, INSTRUMENTS)
             
+            # Check if we have valid data
             if any(v is None for v in live_data.values()):
                 bot_state["status_message"] = "API Error or Missing Data. Skipping iteration."
                 print(f"{live_data['timestamp']} - {bot_state['status_message']}")
@@ -185,25 +258,54 @@ def run_trading_bot():
             if not bot_state['trade_active']:
                 spot = live_data['spot']
                 bot_state["status_message"] = f"Waiting for entry. Spot: {spot:.2f}"
+                
                 if current_time < ENTRY_TIME_START:
                     print(f"Status: {current_time} | Waiting for {ENTRY_TIME_START}. Spot: {spot}")
                     time.sleep(POLLING_INTERVAL_SECONDS)
                     continue
+                
                 if (ENTRY_CONDITIONS['MIN_SPOT'] <= spot <= ENTRY_CONDITIONS['MAX_SPOT']):
                     bot_state['trade_active'] = True
-                    bot_state['position_book'] = {'SELL_CE': live_data['sell_ce_ltp'], 'BUY_CE': live_data['buy_ce_ltp'], 'SELL_PE': live_data['sell_pe_ltp'], 'BUY_PE': live_data['buy_pe_ltp']}
-                    with open(STATE_FILE, 'w') as f:
-                        json.dump({'trade_active': True, 'position_book': bot_state['position_book']}, f)
+                    bot_state['position_book'] = {
+                        'SELL_CE': live_data['sell_ce_ltp'],
+                        'BUY_CE': live_data['buy_ce_ltp'],
+                        'SELL_PE': live_data['sell_pe_ltp'],
+                        'BUY_PE': live_data['buy_pe_ltp']
+                    }
                     
-                    entry_message = (f"🚀 *--- TRADE ENTERED ---*\n" f"Strategy: {PRIMARY_STRATEGY}\n" f"Spot Price: *{spot:.2f}*")
+                    # Save state to file
+                    with open(STATE_FILE, 'w') as f:
+                        json.dump({
+                            'trade_active': True,
+                            'position_book': bot_state['position_book']
+                        }, f)
+                    
+                    entry_message = (
+                        f"🚀 *--- TRADE ENTERED ---*\n"
+                        f"Strategy: {PRIMARY_STRATEGY}\n"
+                        f"Spot Price: *{spot:.2f}*\n"
+                        f"SELL CE {INSTRUMENTS['SELL_CE_STRIKE']}: {live_data['sell_ce_ltp']}\n"
+                        f"BUY CE {INSTRUMENTS['BUY_CE_STRIKE']}: {live_data['buy_ce_ltp']}\n"
+                        f"SELL PE {INSTRUMENTS['SELL_PE_STRIKE']}: {live_data['sell_pe_ltp']}\n"
+                        f"BUY PE {INSTRUMENTS['BUY_PE_STRIKE']}: {live_data['buy_pe_ltp']}"
+                    )
                     send_telegram_message(entry_message)
-                    # ... logging ...
+                    log_trade(live_data['timestamp'], 'ENTRY', PRIMARY_STRATEGY, spot, 0, 'Trade entered')
 
             # --- Monitoring & Exit Logic ---
             if bot_state['trade_active']:
-                pnl_per_lot = 0 # Calculate P&L
+                # Calculate P&L
+                entry_book = bot_state['position_book']
+                pnl_per_lot = (
+                    (entry_book['SELL_CE'] - live_data['sell_ce_ltp']) +
+                    (live_data['buy_ce_ltp'] - entry_book['BUY_CE']) +
+                    (entry_book['SELL_PE'] - live_data['sell_pe_ltp']) +
+                    (live_data['buy_pe_ltp'] - entry_book['BUY_PE'])
+                ) * LOT_SIZE
+                
                 bot_state["pnl_per_lot"] = pnl_per_lot
                 bot_state["status_message"] = f"Position active. P&L: {pnl_per_lot:.2f}"
+                print(f"{live_data['timestamp']} - {bot_state['status_message']}")
                 
                 exit_reason = None
                 if pnl_per_lot >= PROFIT_TARGET_PER_LOT:
@@ -214,8 +316,14 @@ def run_trading_bot():
                     exit_reason = "END_OF_DAY"
                     
                 if exit_reason:
-                    exit_message = (f"🛑 *--- TRADE EXITED ---*\n" f"Reason: {exit_reason}\n" f"Final P&L: *₹{pnl_per_lot:.2f}*")
+                    exit_message = (
+                        f"🛑 *--- TRADE EXITED ---*\n"
+                        f"Reason: {exit_reason}\n"
+                        f"Final P&L: *₹{pnl_per_lot:.2f}*"
+                    )
                     send_telegram_message(exit_message)
+                    log_trade(live_data['timestamp'], 'EXIT', PRIMARY_STRATEGY, 
+                             live_data['spot'], pnl_per_lot, exit_reason)
                     
                     if os.path.exists(STATE_FILE):
                         os.remove(STATE_FILE)
@@ -234,19 +342,22 @@ def run_trading_bot():
     except Exception as e:
         bot_state["status_message"] = f"CRITICAL ERROR: {e}"
         print(f"--- {bot_state['status_message']} ---")
+        import traceback
+        traceback.print_exc()
         send_telegram_message(f"CRITICAL ERROR: {e} 🛑 Shutting down.")
     
     finally:
         if not trade_log.empty:
             trade_log.to_csv(LOG_FILE_NAME, index=False)
+            print(f"Trade log saved to {LOG_FILE_NAME}")
         print("Trading bot thread finished.")
 
 # --- Gunicorn Application Startup ---
-# This block runs when Gunicorn imports the file.
-# It's the correct place for initialization code in a production environment.
-
-# Send deployment success message
-send_telegram_message(f"✅ *Deployment Successful & Bot Initialized*\nStrategy: {PRIMARY_STRATEGY}\nWatching NIFTY 50.")
+send_telegram_message(
+    f"✅ *Deployment Successful & Bot Initialized*\n"
+    f"Strategy: {PRIMARY_STRATEGY}\n"
+    f"Watching NIFTY 50."
+)
 
 # Initialize and start the scheduler
 scheduler = BackgroundScheduler(timezone=INDIA_TZ)
@@ -257,10 +368,7 @@ scheduler.start()
 bot_thread = Thread(target=run_trading_bot, daemon=True)
 bot_thread.start()
 
-
 # --- Main Execution Block (for local development) ---
 if __name__ == "__main__":
-    # This block is for running the app directly with 'python main.py'
-    # It's useful for local testing but is NOT executed by Gunicorn.
     port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
