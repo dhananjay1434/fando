@@ -1,12 +1,12 @@
-# Flask 2.2.x requires Werkzeug < 3.0 and Click >= 8.0.
-# The versions below are compatible.
-Flask==2.2.5
-Werkzeug==2.2.3
-click==8.1.7
+# Flask 1.x is compatible with click 7.x
+Flask==1.1.4
+Werkzeug==1.0.1
+click==7.1.2
 
 # Trading bot dependencies
 pandas
-jugaad-data
+# Pin jugaad-data to the version we know, which requires click 7.1.2
+jugaad-data==0.29
 python-dotenv
 gunicorn==22.0.0
 
